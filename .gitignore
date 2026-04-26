@@ -1,0 +1,35 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+
+# Local Withings/OAuth data
+data/
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Node/TypeScript
+node_modules/
+dist/
+build/
+coverage/
+.npm/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
