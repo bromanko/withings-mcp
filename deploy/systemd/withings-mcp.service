@@ -2,6 +2,7 @@
 Description=Withings MCP server
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/var/lib/withings-mcp/current/index.js
 
 [Service]
 Type=simple

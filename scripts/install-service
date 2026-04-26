@@ -2,10 +2,15 @@
 # shellcheck disable=SC2029
 set -euo pipefail
 
-# One-time systemd bootstrap for the Hetzner host. Run as root.
+# One-time systemd bootstrap for a mutable Linux Hetzner host. Run as root.
 #
 # Usage:
 #   scripts/install-service root@<server-ip>
+#
+# NixOS note:
+#   NixOS manages /etc/systemd/system declaratively, so this imperative installer
+#   is expected to fail there. Import deploy/nixos/withings-mcp.nix into the host
+#   NixOS config instead.
 #
 # After this, populate /var/lib/withings-mcp/env on the server and run scripts/deploy.
 
@@ -36,6 +41,40 @@ if [[ ! -f $UNIT_SRC ]]; then
   exit 1
 fi
 
+print_nixos_help() {
+  cat >&2 <<'EOF'
+
+This host does not allow writing to /etc/systemd/system. If it is NixOS,
+that is expected: systemd units are managed by the NixOS configuration.
+
+Use the declarative module in this repo instead:
+
+  1. Copy or reference deploy/nixos/withings-mcp.nix from your host config.
+  2. Add something like this to configuration.nix or your flake host module:
+
+       imports = [ /path/to/withings-mcp/deploy/nixos/withings-mcp.nix ];
+       services.withings-mcp.enable = true;
+
+  3. Rebuild the host:
+
+       nixos-rebuild switch
+
+  4. Populate /var/lib/withings-mcp/env, then run scripts/deploy.
+
+EOF
+}
+
+echo "==> Checking systemd unit install path"
+if ! ssh "$SSH_TARGET" "
+  set -euo pipefail
+  test -d /etc/systemd/system
+  touch /etc/systemd/system/.withings-mcp-write-test
+  rm -f /etc/systemd/system/.withings-mcp-write-test
+"; then
+  print_nixos_help
+  exit 1
+fi
+
 echo "==> Creating service user and directories"
 ssh "$SSH_TARGET" "
   set -euo pipefail
@@ -53,14 +92,16 @@ ssh "$SSH_TARGET" "
 
 echo "==> Installing systemd unit"
 scp "$UNIT_SRC" "$SSH_TARGET:/tmp/withings-mcp.service"
-ssh "$SSH_TARGET" "
+if ! ssh "$SSH_TARGET" "
   set -euo pipefail
-  mv /tmp/withings-mcp.service /etc/systemd/system/withings-mcp.service
-  chown root:root /etc/systemd/system/withings-mcp.service
-  chmod 0644 /etc/systemd/system/withings-mcp.service
+  install -o root -g root -m 0644 /tmp/withings-mcp.service /etc/systemd/system/withings-mcp.service
+  rm -f /tmp/withings-mcp.service
   systemctl daemon-reload
   systemctl enable withings-mcp
-"
+"; then
+  print_nixos_help
+  exit 1
+fi
 
 echo "==> Done"
 echo "Populate /var/lib/withings-mcp/env, then run: scripts/deploy $SSH_TARGET"

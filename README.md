@@ -100,11 +100,22 @@ The deployment flow mirrors the simple release-directory style used in `~/Code/m
 
 ### One-time server setup
 
-Install Bun on the server so `/usr/local/bin/bun` exists. Then install the systemd unit and create the service directories:
+On a mutable Linux host, install Bun on the server so `/usr/local/bin/bun` exists. Then install the systemd unit and create the service directories:
 
 ```sh
 scripts/install-service root@<server-ip>
 ```
+
+On NixOS, `/etc/systemd/system` is managed declaratively and may be read-only. Skip `scripts/install-service`; import `deploy/nixos/withings-mcp.nix` into the host config instead:
+
+```nix
+{
+  imports = [ /path/to/withings-mcp/deploy/nixos/withings-mcp.nix ];
+  services.withings-mcp.enable = true;
+}
+```
+
+Then run `nixos-rebuild switch` on the host. The deploy script still works after the service exists.
 
 Populate the server environment file:
 
@@ -154,6 +165,9 @@ scripts/materialize-upstream      Create local vendor/withings-mcp checkout
 scripts/deploy                    Build and upload a release to Hetzner
 scripts/install-service           One-time systemd bootstrap
 deploy/systemd/withings-mcp.service
+    Mutable Linux systemd unit
+deploy/nixos/withings-mcp.nix
+    NixOS module for declarative hosts
 deploy/caddy/withings-mcp.caddy.example
 ```
 
