@@ -1,0 +1,30 @@
+[Unit]
+Description=Withings MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=withings-mcp
+Group=withings-mcp
+WorkingDirectory=/var/lib/withings-mcp/current
+EnvironmentFile=/var/lib/withings-mcp/env
+Environment=NODE_ENV=production
+ExecStart=/usr/local/bin/bun /var/lib/withings-mcp/current/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# Basic hardening. The service only needs network access and read access to the
+# deployed release. Secrets are supplied via EnvironmentFile above.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/withings-mcp
+CapabilityBoundingSet=
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

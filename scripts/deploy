@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2029
+set -euo pipefail
+
+# Deploy the pinned, patched akutishevsky/withings-mcp server to a remote host.
+#
+# Usage:
+#   PUBLIC_BASE_URL=https://withings.example.com scripts/deploy root@<server-ip>
+#
+# Optional env vars:
+#   RELEASE_ID       - release id (default: current UTC timestamp)
+#   KEEP_RELEASES    - number of remote releases to keep (default: 10)
+#   REMOTE_BASE      - remote release root (default: /var/lib/withings-mcp)
+#   SERVICE_NAME     - systemd service to restart (default: withings-mcp)
+#   SERVICE_USER     - remote service user for chown if it exists (default: withings-mcp)
+#   SKIP_TYPECHECK   - set to 1 to skip bun run typecheck
+
+SSH_TARGET="${1:-${DEPLOY_HOST:-}}"
+RELEASE_ID="${RELEASE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
+KEEP_RELEASES="${KEEP_RELEASES:-10}"
+REMOTE_BASE="${REMOTE_BASE:-/var/lib/withings-mcp}"
+SERVICE_NAME="${SERVICE_NAME:-withings-mcp}"
+SERVICE_USER="${SERVICE_USER:-withings-mcp}"
+SKIP_TYPECHECK="${SKIP_TYPECHECK:-0}"
+
+if [[ -z $SSH_TARGET ]]; then
+  echo "Usage: $0 <ssh-target>" >&2
+  echo "Example: PUBLIC_BASE_URL=https://withings.example.com $0 root@5.78.44.117" >&2
+  exit 1
+fi
+
+require() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "ERROR: required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+require nix
+require bun
+require rsync
+require ssh
+require python3
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+BUILD_ROOT="$REPO_ROOT/build/releases/$RELEASE_ID"
+WORK_SRC="$BUILD_ROOT/source"
+STAGE_DIR="$BUILD_ROOT/stage"
+REMOTE_RELEASES="$REMOTE_BASE/releases"
+REMOTE_RELEASE_DIR="$REMOTE_RELEASES/$RELEASE_ID"
+REMOTE_CURRENT="$REMOTE_BASE/current"
+
+if [[ -z ${PUBLIC_BASE_URL:-} ]]; then
+  echo "WARNING: PUBLIC_BASE_URL is not set; hosted static pages will still mention withings-mcp.com" >&2
+fi
+
+echo "==> Deploying Withings MCP"
+echo "    target:  $SSH_TARGET"
+echo "    release: $RELEASE_ID"
+echo "    remote:  $REMOTE_RELEASE_DIR"
+
+UPSTREAM_SRC="$(nix build --no-link --print-out-paths "$REPO_ROOT#withings-mcp-src")"
+UPSTREAM_REV="unknown"
+if command -v jq >/dev/null 2>&1; then
+  UPSTREAM_REV="$(nix flake metadata --json "$REPO_ROOT" | jq -r '.locks.nodes["withings-mcp-src"].locked.rev // "unknown"')"
+fi
+
+echo "==> Preparing upstream source"
+rm -rf "$BUILD_ROOT"
+mkdir -p "$WORK_SRC" "$STAGE_DIR"
+cp -R "$UPSTREAM_SRC"/. "$WORK_SRC"/
+chmod -R u+w "$WORK_SRC"
+
+if [[ -n ${PUBLIC_BASE_URL:-} ]]; then
+  "$SCRIPT_DIR/rewrite-public-url" "$WORK_SRC"
+fi
+
+echo "==> Installing dependencies"
+(
+  cd "$WORK_SRC"
+  bun install --frozen-lockfile
+)
+
+if [[ $SKIP_TYPECHECK != "1" ]]; then
+  echo "==> Type-checking"
+  (
+    cd "$WORK_SRC"
+    bun run typecheck
+  )
+fi
+
+echo "==> Building Bun bundle"
+(
+  cd "$WORK_SRC"
+  bun run build
+)
+
+if [[ ! -f "$WORK_SRC/build/index.js" ]]; then
+  echo "ERROR: expected bundle at $WORK_SRC/build/index.js" >&2
+  exit 1
+fi
+
+echo "==> Preparing release layout"
+cp "$WORK_SRC/build/index.js" "$STAGE_DIR/index.js"
+cp "$WORK_SRC/package.json" "$STAGE_DIR/package.json"
+cp "$WORK_SRC/bun.lock" "$STAGE_DIR/bun.lock"
+cp "$WORK_SRC/server.json" "$STAGE_DIR/server.json"
+cp -a "$WORK_SRC/public" "$STAGE_DIR/public"
+mkdir -p "$STAGE_DIR/supabase"
+cp -a "$WORK_SRC/supabase/migrations" "$STAGE_DIR/supabase/migrations"
+cat >"$STAGE_DIR/RELEASE" <<EOF
+release=$RELEASE_ID
+source=github:akutishevsky/withings-mcp
+source_rev=$UPSTREAM_REV
+built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+public_base_url=${PUBLIC_BASE_URL:-}
+EOF
+
+echo "==> Creating remote release directory"
+ssh "$SSH_TARGET" "mkdir -p '$REMOTE_RELEASES' '$REMOTE_RELEASE_DIR'"
+
+echo "==> Uploading release"
+rsync -az --delete "$STAGE_DIR"/ "$SSH_TARGET:$REMOTE_RELEASE_DIR/"
+
+echo "==> Activating release"
+ssh "$SSH_TARGET" "
+  set -euo pipefail
+  if id '$SERVICE_USER' >/dev/null 2>&1; then
+    chown -R '$SERVICE_USER:$SERVICE_USER' '$REMOTE_RELEASE_DIR'
+  fi
+  ln -sfn '$REMOTE_RELEASE_DIR' '$REMOTE_CURRENT'
+
+  if [ '$KEEP_RELEASES' -gt 0 ]; then
+    ls -1dt '$REMOTE_RELEASES'/* 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -rf --
+  fi
+
+  systemctl restart '$SERVICE_NAME'
+"
+
+echo "==> Service status"
+ssh "$SSH_TARGET" "systemctl --no-pager --full status '$SERVICE_NAME' || true"
+
+echo "==> Done"

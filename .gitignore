@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.envrc.local
 *.pem
 *.key
 *.token
@@ -14,6 +15,14 @@ data/
 # Logs
 *.log
 logs/
+
+# Nix/direnv
+.direnv/
+result
+result-*
+
+# Materialized upstream source
+vendor/withings-mcp/
 
 # Node/TypeScript
 node_modules/

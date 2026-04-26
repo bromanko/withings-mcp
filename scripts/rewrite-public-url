@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Rewrite upstream static-page references from withings-mcp.com to the domain
+# this personal deployment will use.
+#
+# Usage:
+#   PUBLIC_BASE_URL=https://withings.example.com scripts/rewrite-public-url vendor/withings-mcp
+#   scripts/rewrite-public-url vendor/withings-mcp https://withings.example.com
+
+SOURCE_DIR="${1:-}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${2:-}}"
+
+if [[ -z $SOURCE_DIR ]]; then
+  echo "Usage: $0 <source-dir> [public-base-url]" >&2
+  exit 1
+fi
+
+if [[ -z $PUBLIC_BASE_URL ]]; then
+  echo "PUBLIC_BASE_URL is not set; leaving upstream public URLs unchanged" >&2
+  exit 0
+fi
+
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+
+python3 - "$SOURCE_DIR" "$PUBLIC_BASE_URL" <<'PY'
+from pathlib import Path
+from urllib.parse import urlparse
+import sys
+
+root = Path(sys.argv[1])
+base_url = sys.argv[2].rstrip("/")
+parsed = urlparse(base_url)
+host = parsed.netloc or base_url.replace("https://", "").replace("http://", "").strip("/")
+
+replacements = {
+    "https://withings-mcp.com": base_url,
+    "withings-mcp.com": host,
+}
+
+for rel in [
+    "public/index.html",
+    "public/health.html",
+    "server.json",
+]:
+    path = root / rel
+    if not path.exists():
+        continue
+    text = path.read_text()
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    path.write_text(text)
+PY
+
+echo "Rewrote upstream public URLs to $PUBLIC_BASE_URL"

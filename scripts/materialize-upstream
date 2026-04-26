@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Materialize the pinned, patched upstream source into a local working directory.
+# The destination is ignored by git/jj and is safe to delete/recreate.
+
+DEST="${1:-vendor/withings-mcp}"
+INSTALL_DEPS="${INSTALL_DEPS:-1}"
+
+require() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "ERROR: required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+require nix
+require python3
+if [[ $INSTALL_DEPS != "0" ]]; then
+  require bun
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ABS_DEST="$REPO_ROOT/$DEST"
+TMP_DEST="$ABS_DEST.tmp"
+
+UPSTREAM_SRC="$(nix build --no-link --print-out-paths "$REPO_ROOT#withings-mcp-src")"
+
+rm -rf "$TMP_DEST"
+mkdir -p "$(dirname "$TMP_DEST")"
+cp -R "$UPSTREAM_SRC" "$TMP_DEST"
+chmod -R u+w "$TMP_DEST"
+
+if [[ -n ${PUBLIC_BASE_URL:-} ]]; then
+  "$SCRIPT_DIR/rewrite-public-url" "$TMP_DEST"
+fi
+
+rm -rf "$ABS_DEST"
+mv "$TMP_DEST" "$ABS_DEST"
+
+if [[ $INSTALL_DEPS != "0" ]]; then
+  (
+    cd "$ABS_DEST"
+    bun install --frozen-lockfile
+  )
+fi
+
+echo "Materialized upstream withings-mcp source at $DEST"
