@@ -1,4 +1,4 @@
-.PHONY: upstream dev typecheck build deploy install-service format check clean
+.PHONY: upstream dev typecheck build deploy format check clean
 
 upstream:
 	scripts/materialize-upstream
@@ -14,9 +14,6 @@ build: upstream
 
 deploy:
 	scripts/deploy $(DEPLOY_HOST)
-
-install-service:
-	scripts/install-service $(DEPLOY_HOST)
 
 format:
 	nix fmt

@@ -7,7 +7,7 @@ This repo does not fork the upstream application code directly. Instead it:
 - pins the upstream repo as a Nix flake input,
 - applies a small local patch to remove the upstream Google Analytics tag from static pages,
 - provides a Nix/direnv development shell with the tools needed to work on and deploy it,
-- provides scripts and systemd/Caddy examples for deploying to a Hetzner host.
+- provides a release-directory deploy script for the Hetzner/NixOS host managed by `~/Code/nix-config`.
 
 ## Development environment
 
@@ -98,24 +98,14 @@ The deployment flow mirrors the simple release-directory style used in `~/Code/m
 3. Update `/var/lib/withings-mcp/current`.
 4. Restart the `withings-mcp` systemd service.
 
-### One-time server setup
+### Host setup
 
-On a mutable Linux host, install Bun on the server so `/usr/local/bin/bun` exists. Then install the systemd unit and create the service directories:
+The NixOS service user, systemd unit, and Caddy virtual host are managed from `~/Code/nix-config` in the `sleeper-service` host config. Apply that host config before deploying:
 
 ```sh
-scripts/install-service root@<server-ip>
+cd ~/Code/nix-config
+scripts/hetzner/apply-host-config.sh 5.78.44.117 sleeper-service
 ```
-
-On NixOS, `/etc/systemd/system` is managed declaratively and may be read-only. Skip `scripts/install-service`; import `deploy/nixos/withings-mcp.nix` into the host config instead:
-
-```nix
-{
-  imports = [ /path/to/withings-mcp/deploy/nixos/withings-mcp.nix ];
-  services.withings-mcp.enable = true;
-}
-```
-
-Then run `nixos-rebuild switch` on the host. The deploy script still works after the service exists.
 
 Populate the server environment file:
 
@@ -125,18 +115,18 @@ ssh root@<server-ip> '$EDITOR /var/lib/withings-mcp/env'
 ssh root@<server-ip> 'chgrp withings-mcp /var/lib/withings-mcp/env && chmod 0640 /var/lib/withings-mcp/env'
 ```
 
-Use `deploy/caddy/withings-mcp.caddy.example` as a starting point for HTTPS reverse proxying to `127.0.0.1:3000`.
+The default configured domain is `withings.bromanko.com`. If you change it in `~/Code/nix-config`, use the same value for `PUBLIC_BASE_URL` when deploying.
 
 Your Withings developer app redirect URI should be:
 
 ```text
-https://your-domain.example/callback
+https://withings.bromanko.com/callback
 ```
 
 MCP clients should connect to:
 
 ```text
-https://your-domain.example/mcp
+https://withings.bromanko.com/mcp
 ```
 
 ### Deploy
@@ -144,7 +134,7 @@ https://your-domain.example/mcp
 Set `PUBLIC_BASE_URL` so the upstream static pages and `server.json` are rewritten from `withings-mcp.com` to your own domain before bundling:
 
 ```sh
-PUBLIC_BASE_URL=https://your-domain.example scripts/deploy root@<server-ip>
+PUBLIC_BASE_URL=https://withings.bromanko.com scripts/deploy root@5.78.44.117
 ```
 
 Optional deployment variables:
@@ -163,12 +153,7 @@ flake.nix                         Nix dev shell and upstream source pin
 patches/withings-mcp/             Local patch applied to upstream source
 scripts/materialize-upstream      Create local vendor/withings-mcp checkout
 scripts/deploy                    Build and upload a release to Hetzner
-scripts/install-service           One-time systemd bootstrap
-deploy/systemd/withings-mcp.service
-    Mutable Linux systemd unit
-deploy/nixos/withings-mcp.nix
-    NixOS module for declarative hosts
-deploy/caddy/withings-mcp.caddy.example
+scripts/withings-mcp.env.example  Runtime env template for /var/lib/withings-mcp/env
 ```
 
 ## License
